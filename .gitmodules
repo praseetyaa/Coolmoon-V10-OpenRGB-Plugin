@@ -1,0 +1,3 @@
+[submodule "third_party/OpenRGB"]
+	path = third_party/OpenRGB
+	url = https://github.com/CalcProgrammer1/OpenRGB.git

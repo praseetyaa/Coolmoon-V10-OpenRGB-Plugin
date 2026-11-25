@@ -1,0 +1,8 @@
+{
+    "OpenRGBPluginAPIVersion": 5,
+    "Id": "coolmoon_custom_fan_plugin",
+    "Name": "Coolmoon Custom Fan ARGB Plugin",
+    "VersionStr": "1.0.0",
+    "Commit": "1.0.0",
+    "Url": "https://openrgb.org"
+}
