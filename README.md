@@ -42,6 +42,21 @@ Native C++ Plugin untuk **OpenRGB 1.0+ (Windows x64 / Plugin API v5)** untuk men
 
 ---
 
+## 🌀 Kontrol Kecepatan Kipas (Fan Speed Control)
+
+Plugin ini dilengkapi antarmuka kontrol kipas terintegrasi di tab **Settings** -> **Coolmoon USB**:
+
+1. **Slider PWM (0% – 100%)**: Atur kecepatan putaran kipas secara presisi dan seketika (*real-time* via opcode `0xFB`).
+2. **Tombol Preset Cepat**:
+   - **Silent (30%)**: Hening untuk kondisi santai / *idle*.
+   - **Normal (60%)**: Kecepatan standar untuk pemakaian harian.
+   - **Turbo (85%)**: Aliran udara tinggi untuk sesi beban / *gaming*.
+   - **Full Speed (100%)**: Putaran maksimal untuk pendinginan instan.
+3. **Motherboard PWM Sync Checkbox**:
+   - Mengalihkan kontrol kecepatan kipas ke sinyal kabel header PWM motherboard (opcode `0x08`), sehingga kurva kipas mengikuti kontrol suhu BIOS atau software fan controller motherboard.
+
+---
+
 ## 🔨 Kompilasi Mandiri (Build from Source)
 
 ### Kebutuhan:
