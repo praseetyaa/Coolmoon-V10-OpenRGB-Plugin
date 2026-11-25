@@ -149,3 +149,45 @@ void CoolmoonUSBDriver::SendBroadcastLEDs(const std::vector<RGBColorData>& all_l
 void CoolmoonUSBDriver::CommitFrame() {
     // USBFAN menerapkan perubahan warna langsung saat paket diterima
 }
+
+void CoolmoonUSBDriver::SetFanSpeed(uint8_t speed_pct) {
+    if (!dev) return;
+
+    speed_pct = std::min<uint8_t>(speed_pct, 100);
+
+    uint8_t pkt[64] = {0};
+    pkt[0] = 0x52; // 'R'
+    pkt[1] = 0x42; // 'B'
+    pkt[2] = 0x07; // Frame length
+    pkt[3] = 0x00;
+    pkt[4] = 0xFB; // Opcode Fan Speed PWM
+    pkt[5] = speed_pct;
+
+    uint32_t sum = 0;
+    for (int i = 0; i < 6; ++i) {
+        sum += pkt[i];
+    }
+    pkt[6] = static_cast<uint8_t>(sum & 0xFF);
+
+    WritePacket64(pkt);
+}
+
+void CoolmoonUSBDriver::SetFanControlMode(uint8_t mode) {
+    if (!dev) return;
+
+    uint8_t pkt[64] = {0};
+    pkt[0] = 0x52; // 'R'
+    pkt[1] = 0x42; // 'B'
+    pkt[2] = 0x07; // Frame length
+    pkt[3] = 0x00;
+    pkt[4] = 0x08; // Opcode Fan Speed Control Authority
+    pkt[5] = mode; // 0 = Manual/Software, 1 = Motherboard PWM Sync
+
+    uint32_t sum = 0;
+    for (int i = 0; i < 6; ++i) {
+        sum += pkt[i];
+    }
+    pkt[6] = static_cast<uint8_t>(sum & 0xFF);
+
+    WritePacket64(pkt);
+}

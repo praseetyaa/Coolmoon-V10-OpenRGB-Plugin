@@ -62,6 +62,30 @@ Digunakan oleh plugin saat inisialisasi untuk membaca konfigurasi port dan jumla
     * `Byte +3`: Port ID (`0..9`)
     * `Byte +4`: Reserved / Padding (`0x00`)
 
+### 2.3. Protokol Fan Speed PWM (`0xFB`)
+Digunakan untuk mengatur kecepatan putaran kipas (PWM duty cycle 0% - 100%).
+* **Format Paket (64 byte):**
+  * `Byte 0`: `0x52` ('R')
+  * `Byte 1`: `0x42` ('B')
+  * `Byte 2`: `0x07` (Panjang paket aktif)
+  * `Byte 3`: `0x00`
+  * `Byte 4`: `0xFB` (Opcode Fan Speed PWM)
+  * `Byte 5`: `speed_pct` (Nilai kecepatan `0` s/d `100`)
+  * `Byte 6`: `SUM(Byte 0..5) & 0xFF` (Checksum)
+  * `Byte 7..63`: Padding `0x00`
+
+### 2.4. Protokol Mode Otoritas Kipas (`0x08`)
+Digunakan untuk mengalihkan kendali kipas antara kontrol manual software dan sinyal PWM header motherboard.
+* **Format Paket (64 byte):**
+  * `Byte 0`: `0x52` ('R')
+  * `Byte 1`: `0x42` ('B')
+  * `Byte 2`: `0x07` (Panjang paket aktif)
+  * `Byte 3`: `0x00`
+  * `Byte 4`: `0x08` (Opcode Fan Control Authority)
+  * `Byte 5`: `mode` (`0` = Manual/Software, `1` = Motherboard PWM Sync)
+  * `Byte 6`: `SUM(Byte 0..5) & 0xFF` (Checksum)
+  * `Byte 7..63`: Padding `0x00`
+
 ---
 
 ## 3. Struktur Direktori Proyek

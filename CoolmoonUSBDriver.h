@@ -38,6 +38,10 @@ public:
     void SendBroadcastLEDs(const std::vector<RGBColorData>& all_leds);
     void CommitFrame();
 
+    // Fan speed & mode control
+    void SetFanSpeed(uint8_t speed_pct);   // 0..100%
+    void SetFanControlMode(uint8_t mode);  // 0 = Manual/Software, 1 = Motherboard PWM Sync
+
 private:
     hid_device* dev;
     std::string device_path;

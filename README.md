@@ -8,6 +8,7 @@ Native C++ Plugin untuk **OpenRGB 1.0+ (Windows x64 / Plugin API v5)** untuk men
 
 - **Auto-Read Hardware Config**: Otomatis mendeteksi port aktif dan jumlah LED langsung dari memori MCU controller saat startup atau rescan devices.
 - **Full Per-LED Control**: Menggunakan protokol streaming beruntun `0x88` (`mubu_chai`), memungkinkan kontrol mandiri per-titik LED tanpa batasan 16-LED dan tanpa bentrok broadcast.
+- **Fan Speed Control (PWM)**: Kontrol kecepatan kipas bawaan (0–100%) dengan preset (Silent, Normal, Turbo, Full Speed) dan dukungan sinkronisasi kabel PWM motherboard di tab **Settings -> Coolmoon USB**.
 - **Manual Zone Resize**: Mendukung penyesuaian jumlah LED manual (1–200 LED per zone) lewat dialog bawaan **"Edit Zone"** di OpenRGB.
 - **High LED Count Support**: Teruji stabil pada konfigurasi multi-kipas dan strip panjang (Port 72 LED, Port 18 LED, dsb.).
 

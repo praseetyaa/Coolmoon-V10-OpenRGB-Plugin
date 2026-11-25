@@ -16,6 +16,7 @@ public:
     RGBController_Setup CreateSetup();
     void SetControllerInterface(RGBControllerInterface* iface) { controller = iface; }
     RGBControllerInterface* GetControllerInterface() const { return controller; }
+    std::shared_ptr<CoolmoonUSBDriver> GetDriver() const { return driver; }
 
     void DeviceUpdateLEDs();
     void DeviceUpdateZoneLEDs(int zone);
