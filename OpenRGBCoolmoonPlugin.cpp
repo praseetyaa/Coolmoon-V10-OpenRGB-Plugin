@@ -1,17 +1,23 @@
 #include "OpenRGBCoolmoonPlugin.h"
+#include "CoolmoonIcon.h"
 #include <QLabel>
 #include <QVBoxLayout>
 
 OpenRGBPluginInfo OpenRGBCoolmoonPlugin::GetPluginInfo() {
     OpenRGBPluginInfo info;
     info.Name            = "Coolmoon Custom Fan ARGB Plugin";
-    info.Description     = "Native USB HID driver untuk kipas custom 16-LED Bezel + 8-LED Hub Ring";
-    info.Version         = "1.0.0";
-    info.Commit          = "1.0.0";
-    info.URL             = "https://openrgb.org";
+    info.Description     = "Native USB HID driver untuk kipas Coolmoon USB (Auto-Detect MCU & Per-LED)";
+    info.Version         = "1.2.0";
+    info.Commit          = "1.2.0";
+    info.URL             = "https://github.com/praseetyaa/Coolmoon-V10-OpenRGB-Plugin";
     info.Location        = OPENRGB_PLUGIN_LOCATION_SETTINGS;
     info.Label           = "Coolmoon USB";
     info.ProtocolVersion = 0;
+
+    QImage icon          = GetCoolmoonIcon();
+    info.Icon            = icon;
+    info.TabIcon         = icon.scaled(24, 24, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+
     return info;
 }
 
