@@ -1,153 +1,128 @@
-# Blueprint Pengembangan: Native OpenRGB C++ Plugin untuk Coolmoon / USBFAN (`1A86:FE05`)
+# Blueprint & Spesifikasi Teknis: Native OpenRGB C++ Plugin untuk Coolmoon / USBFAN (`1A86:FE05`)
 
-Dokumen ini berfungsi sebagai **Single Source of Truth (SSOT)** dan spesifikasi teknis lengkap untuk membangun *Native OpenRGB C++ Plugin* (`.dll`) pada Windows x64 (**OpenRGB 1.0+ / Plugin API v5**).
+Dokumen ini berfungsi sebagai **Single Source of Truth (SSOT)** dan dokumentasi teknis lengkap untuk *Native OpenRGB C++ Plugin* (`.dll`) pada Windows x64 (**OpenRGB 1.0+ / Plugin API v5**).
 
 ---
 
-## 1. Ringkasan Proyek & Tujuan
+## 1. Ringkasan Proyek & Target Hardware
 
 * **Target Aplikasi:** OpenRGB 1.0+ (Windows 64-bit, Plugin API v5).
-* **Target Hardware Controller:** Coolmoon USB ARGB Controller (terdeteksi di Windows sebagai `USBFAN`).
+* **Target Hardware Controller:** Coolmoon USB ARGB Controller (terdeteksi di Windows sebagai `USBFAN` / `ROBOBLOQ`).
 * **Identitas USB HID:**
   * **Vendor ID (`VID`):** `0x1A86`
   * **Product ID (`PID`):** `0xFE05`
-  * **HID Usage Page:** Vendor-Defined (`>= 0xFF00`)
-* **Target Kipas & Topologi LED Custom:**
-  * **Model Kipas:** Paradox Gaming F-120 PRO ARGB (`120 × 120 × 25 mm`) dengan modifikasi *3D-printed* bezel luar dan *center hub cap*.
-  * **Konfigurasi Fisik per Kipas (`24 LED` total):**
-    1. **Bezel Alis (`16 LED`):** 2 strip *side-view* WS2812B (`8 LED` kiri + `8 LED` kanan) terpasang seri pada indeks LED `0–15`.
-    2. **Center Hub Ring (`8 LED`):** 1 ring WS2812B 8-bit di balik *hub cap* tengah pada indeks LED `16–23`.
-  * **Pemisahan Zona di OpenRGB:** Setiap port kipas didaftarkan sebagai **2 Zone independen** (`Fan X - Bezel Alis` berisi `16 LED` dan `Fan X - Center Hub` berisi `8 LED`) agar *OpenRGB Effects Plugin* dapat menjalankan efek berbeda secara bersamaan pada alis dan bagian tengah kipas.
+  * **Usage Page:** Vendor-Defined (`0xFF00`), Usage: `0x0001`
+  * **Interface Number:** `0`
+* **Topologi Port & LED Fisik (Hasil Deteksi MCU):**
+  * Port 0 (Order 1): 8 LED
+  * Port 1 (Order 2): 8 LED
+  * Port 2 (Order 3): 10 LED
+  * Port 3 (Order 4): 8 LED
+  * Port 4 (Order 5): 10 LED
+  * Port 5..7: 0 LED (tidak terhubung / kosong)
+  * Port 8 (Order 9): 72 LED (daisy-chain fan/strip)
+  * Port 9 (Order 10): 18 LED (strip)
+  * **Total Rantai LED Aktif:** **134 LED**
+* **Fitur Utama Plugin:**
+  1. **Auto-Read Hardware Config:** Otomatis membaca jumlah LED & status port dari EEPROM/MCU controller saat startup atau rescan devices.
+  2. **Full Per-LED Control:** Menggunakan protokol continuous stream `0x88` (`mubu_chai`), memungkinkan kontrol mandiri per-titik LED tanpa batasan 16 LED.
+  3. **Manual Zone Resize:** Tombol **Edit Zone** aktif di UI OpenRGB (`ZONE_FLAG_MANUALLY_CONFIGURABLE_SIZE`), pengguna bebas mengatur jumlah LED (1–200 LED) tiap port secara manual.
 
 ---
 
-## 2. Spesifikasi Protokol USB HID (`USBFAN 1A86:FE05`)
+## 2. Spesifikasi Protokol USB HID
 
-Berdasarkan analisis paket *Interrupt OUT* dari perangkat asli (`USBPcap2`), controller menerima paket berukuran tetap **`64 byte`** (di Windows dikirim lewat `hid_write` dengan tambahan 1 byte `Report ID = 0x00` di depan, sehingga buffer pengiriman berjumlah **`65 byte`**).
+Controller Coolmoon berkomunikasi lewat **USB HID Report** ukuran tetap **64 byte** (di Windows ditambahkan 1 byte `Report ID = 0x00` di depan, total **65 byte**).
 
-### Struktur Frame Paket `64 Byte`
+### 2.1. Protokol Utama: Continuous Streaming (`0x88` / `mubu_chai`)
+Digunakan untuk pengiriman warna LED ke seluruh port dalam satu frame berkelanjutan. Mengatasi limit 16-LED dan bug broadcast pada protokol lama.
 
-| Offset Byte | Panjang | Nilai Hex | Keterangan / Fungsi Protokol |
+* **Format Paket (64 byte):**
+
+| Offset Byte | Panjang | Nilai Hex | Keterangan |
 | :--- | :--- | :--- | :--- |
-| `0 – 2` | 3 Byte | `52 42 3C` | Header ASCII **`"RB"`** + panjang frame aktif **`60` byte (`0x3C`)** |
-| `3` | 1 Byte | `0x00..0x0F` | Index port / nomor urut fragmen paket (`0` untuk LED `0–15`, `1` untuk LED `16–23`) |
-| `4` | 1 Byte | `0x03` | Command: **Direct Per-LED RGB Stream** |
-| `5 – 6` | 2 Byte | `FF FF` | Port bitmask aktif |
-| `7 – 10` | 4 Byte | `00 03 01 99` | Parameter kontrol stream warna bawaan firmware `USBFAN` |
-| `11 – 58` | 48 Byte | `R0 G0 B0 ... R15 G15 B15` | Payload warna mentah untuk maksimal **`16 LED` (`16 × 3 byte`)** dengan urutan **`R-G-B`** |
-| `59` | 1 Byte | `SUM & 0xFF` | **Checksum:** Penjumlahan byte `0` sampai byte `58`, diambil 8-bit terakhir |
-| `60 – 63` | 4 Byte | `00 00 00 00` | Padding nol penggenap ukuran paket HID `64 byte` |
+| `0` | 1 Byte | `0x88` | Opcode Continuous RGB Stream |
+| `1` | 1 Byte | `z` | Total paket/chunk (`ceil(total_byte / 60)`) |
+| `2` | 1 Byte | `1..z` | Nomor urut chunk (1-based index) |
+| `3 – 62` | s.d. 60 Byte | `R0 G0 B0 ...` | Payload warna LED mentah (maksimal 20 LED per paket) urutan **`R-G-B`** |
+| `63` | 1 Byte | `SUM & 0xFF` | Checksum: `SUM(Byte 0..62) & 0xFF` |
 
-### Aturan Penting Komunikasi
-1. **Urutan Warna (`Color Order`):** **`R-G-B`** (bukan `G-R-B`).
-2. **Pembaruan Instan (*No Separate Latch*):** Controller langsung memperbarui nyala LED setiap kali paket `52 42 3C` diterima tanpa memerlukan paket *commit/latch* tambahan.
-3. **Fragmentasi Paket (> 16 LED):** Satu paket menampung maksimal **`16 LED` (`48 byte`)**. Karena setiap kipas memiliki **`24 LED`**, driver memecah pengiriman per port menjadi **2 paket berurutan**:
-   * **Paket 0:** Mengirim LED `0–15` (*Bezel Alis*).
-   * **Paket 1:** Mengirim LED `16–23` (*Center Hub*) + 8 slot LED sisanya diisi `0x00`.
+Untuk 134 LED (402 byte payload), driver membagi payload menjadi **7 paket chunk** yang dikirim berurutan.
+
+### 2.2. Protokol Auto-Read Konfigurasi MCU (`0x52 0x42 0x07`)
+Digunakan oleh plugin saat inisialisasi untuk membaca konfigurasi port dan jumlah LED dari MCU.
+
+* **Request Paket:**
+  `[0x52, 0x42, 0x07, 0x00, 0x01, 0xFF, Checksum]` (panjang 64 byte, sisa diisi `0x00`).
+* **Respon dari MCU (64 byte):**
+  * `Byte 0..5`: Header `52 42 39 00 01 FF`
+  * `Byte 6..55`: 10 record port (@ 5 byte per port untuk Port 0..9):
+    * `Byte +0..+1`: Jumlah LED (`uint16_t` Little-Endian)
+    * `Byte +2`: Tipe / Status Flag
+    * `Byte +3`: Port ID (`0..9`)
+    * `Byte +4`: Reserved / Padding (`0x00`)
 
 ---
 
 ## 3. Struktur Direktori Proyek
 
 ```text
-OpenRGBCoolmoonPlugin/
-├── OPENRGB_COOLMOON_PLUGIN_DOCS.md   <-- Dokumen blueprint ini
-├── CMakeLists.txt                    <-- Build script otomatis (Qt + hidapi + OpenRGB SDK)
-├── OpenRGBCoolmoonPlugin.h           <-- Header entry-point OpenRGB Plugin API v5
-├── OpenRGBCoolmoonPlugin.cpp         <-- Implementasi deteksi HID & registrasi controller
-├── RGBController_CoolmoonUSB.h       <-- Header definisi Zone (Bezel Alis + Center Hub)
-├── RGBController_CoolmoonUSB.cpp     <-- Implementasi mapping warna per-zone & per-LED
-├── CoolmoonUSBDriver.h               <-- Header driver USB HID & konstanta VID/PID
-├── CoolmoonUSBDriver.cpp             <-- Implementasi pembentuk paket 64-byte & checksum
+coolmoon-plugin-openrgb/
+├── .gitignore                              <-- Abaikan build/, *.dll, dsb.
+├── .gitmodules                             <-- Referensi submodule OpenRGB SDK
+├── CMakeLists.txt                          <-- Script kompilasi CMake (Qt6 + hidapi + OpenRGB SDK)
+├── OpenRGBCoolmoonPlugin.json              <-- Metadata plugin Qt (API Version 5)
+├── OpenRGBCoolmoonPlugin.h                 <-- Entry-point OpenRGB Plugin API v5
+├── OpenRGBCoolmoonPlugin.cpp               <-- Inisialisasi plugin, auto-read, & registrasi controller
+├── RGBController_CoolmoonUSB.h             <-- Header controller virtual & deklarasi zone
+├── RGBController_CoolmoonUSB.cpp           <-- Handler update LED, mode, & resize zone
+├── CoolmoonUSBDriver.h                     <-- Driver HID USB, definisi struct port & RGB
+├── CoolmoonUSBDriver.cpp                   <-- Implementasi pengiriman paket 0x88 & pembacaan config
+├── openrgb_coolmoon_usb_plugin_blueprint.md<-- Dokumen spesifikasi teknis (SSOT)
 └── third_party/
-    └── OpenRGB/                      <-- Shallow clone dari CalcProgrammer1/OpenRGB
+    └── OpenRGB/                            <-- Header OpenRGB SDK (CalcProgrammer1/OpenRGB)
 ```
 
 ---
 
-## 4. Instruksi Setup & Build untuk AI Agent (Antigravity)
+## 4. Panduan Kompilasi & Deployment
 
-Jika proyek ini dikerjakan oleh AI Agent di Antigravity, ikuti urutan eksekusi berikut secara berurutan:
+### Persyaratan Lingkungan:
+* **MSVC Hostx64 x64** (Visual Studio 2022 / Build Tools)
+* **Windows SDK 10.0+**
+* **Qt 6.8+ (msvc2022_64)**
+* **CMake 3.16+**
 
-### Langkah 1: Cek Versi Qt dari Instalasi OpenRGB Lokal
-Periksa folder instalasi OpenRGB di Windows pengguna (biasanya di `C:\Program Files\OpenRGB\` atau folder portable OpenRGB):
-* Jika terdapat `Qt6Core.dll`, gunakan **Qt 6** (`find_package(Qt6 REQUIRED COMPONENTS Core Widgets)`).
-* Jika terdapat `Qt5Core.dll`, gunakan **Qt 5** (`find_package(Qt5 REQUIRED COMPONENTS Core Widgets)`).
-* *Penting:* Versi mayor Qt (Qt5 vs Qt6) dan arsitektur (`x64`) pada `.dll` plugin **wajib sama** dengan executable `OpenRGB.exe` agar tidak gagal dimuat (`LoadLibrary` error).
-
-### Langkah 2: Ambil Header & Base Class OpenRGB SDK
-Jalankan perintah berikut di root folder proyek agar header resmi OpenRGB dan `RGBController.cpp` tersedia untuk proses kompilasi:
+### Perintah Build PowerShell:
 ```powershell
-git clone --depth 1 https://github.com/CalcProgrammer1/OpenRGB.git third_party/OpenRGB
-```
-*Verifikasi kompatibilitas API:* Sebelum mengompilasi, periksa `third_party/OpenRGB/OpenRGBPluginInterface.h` dan `third_party/OpenRGB/OpenRGBPluginAPIInterface.h` untuk memastikan nama metode registrasi controller (`RegisterVirtualRGBController` / `UnregisterVirtualRGBControllerInThread` atau `RegisterRGBController` / `UnregisterRGBController`) sesuai dengan versi header tersebut.
+# 1. Konfigurasi Environment MSVC & Qt
+$env:PATH = "C:\msvc\unpack\VC\Tools\MSVC\14.44.35207\bin\Hostx64\x64;C:\msvc\unpack\Windows Kits\10\bin\10.0.26100.0\x64;C:\Qt\6.8.3\msvc2022_64\bin;C:\Program Files\CMake\bin;" + $env:PATH
+$env:INCLUDE = "C:\msvc\unpack\VC\Tools\MSVC\14.44.35207\include;C:\msvc\unpack\Windows Kits\10\Include\10.0.26100.0\ucrt;C:\msvc\unpack\Windows Kits\10\Include\10.0.26100.0\um;C:\msvc\unpack\Windows Kits\10\Include\10.0.26100.0\shared"
+$env:LIB = "C:\msvc\unpack\VC\Tools\MSVC\14.44.35207\lib\x64;C:\msvc\unpack\Windows Kits\10\Lib\10.0.26100.0\ucrt\x64;C:\msvc\unpack\Windows Kits\10\Lib\10.0.26100.0\um\x64;C:\Qt\6.8.3\msvc2022_64\lib"
 
-### Langkah 3: Kompilasi `.dll` via CMake (MSVC x64)
-`CMakeLists.txt` di bawah sudah menggunakan `FetchContent` untuk mengunduh dan membangun pustaka `hidapi` secara statis secara otomatis sehingga tidak perlu mencari file `.lib` eksternal:
-```powershell
-cmake -B build -G "Visual Studio 17 2022" -A x64
+# 2. Generate Build Files
+cmake -B build -G "NMake Makefiles" -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="C:/Qt/6.8.3/msvc2022_64" -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+
+# 3. Kompilasi DLL
 cmake --build build --config Release
+
+# 4. Deploy ke OpenRGB
+$dst = "$env:APPDATA\OpenRGB\plugins\OpenRGBCoolmoonPlugin.dll"
+$src = "build\OpenRGBCoolmoonPlugin.dll"
+if (Test-Path $dst) { Move-Item $dst "$dst.old" -Force }
+Copy-Item $src $dst -Force
 ```
-Output akhir akan dihasilkan pada: `build/Release/OpenRGBCoolmoonPlugin.dll`.
 
 ---
 
-## 5. Kode Sumber Lengkap (Production-Ready)
+## 5. Implementasi Kode Lengkap
 
-### 5.1. `CMakeLists.txt`
-```cmake
-cmake_minimum_required(VERSION 3.16)
-project(OpenRGBCoolmoonPlugin LANGUAGES C CXX)
-
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_AUTOMOC ON)
-
-include(FetchContent)
-
-# 1. Unduh & build hidapi secara otomatis untuk Windows HID
-FetchContent_Declare(
-    hidapi
-    GIT_REPOSITORY https://github.com/libusb/hidapi.git
-    GIT_TAG        hidapi-0.14.0
-)
-set(HIDAPI_BUILD_HIDTEST OFF CACHE BOOL "" FORCE)
-FetchContent_MakeAvailable(hidapi)
-
-# 2. Deteksi Qt6 atau Qt5 (sesuaikan dengan versi OpenRGB yang terpasang)
-find_package(Qt6 COMPONENTS Core Widgets QUIET)
-if(Qt6_FOUND)
-    set(QT_LIBS Qt6::Core Qt6::Widgets)
-else()
-    find_package(Qt5 REQUIRED COMPONENTS Core Widgets)
-    set(QT_LIBS Qt5::Core Qt5::Widgets)
-endif()
-
-set(OPENRGB_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/OpenRGB")
-
-# 3. Target Plugin DLL
-add_library(OpenRGBCoolmoonPlugin SHARED
-    OpenRGBCoolmoonPlugin.h
-    OpenRGBCoolmoonPlugin.cpp
-    RGBController_CoolmoonUSB.h
-    RGBController_CoolmoonUSB.cpp
-    CoolmoonUSBDriver.h
-    CoolmoonUSBDriver.cpp
-    ${OPENRGB_DIR}/RGBController/RGBController.cpp
-)
-
-target_include_directories(OpenRGBCoolmoonPlugin PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}
-    ${OPENRGB_DIR}
-    ${OPENRGB_DIR}/RGBController
-    ${OPENRGB_DIR}/dependencies/json
-)
-
-target_link_libraries(OpenRGBCoolmoonPlugin PRIVATE
-    ${QT_LIBS}
-    hidapi::hidapi
-    setupapi
-)
+### 5.1. `OpenRGBCoolmoonPlugin.json`
+```json
+{
+    "OpenRGBPluginAPIVersion": 5,
+    "Id": "coolmoon_custom_fan_plugin"
+}
 ```
 
 ### 5.2. `CoolmoonUSBDriver.h`
@@ -159,7 +134,6 @@ target_link_libraries(OpenRGBCoolmoonPlugin PRIVATE
 #include <vector>
 #include "hidapi.h"
 
-// Identitas hardware USBFAN (Coolmoon USB ARGB Controller)
 #define COOLMOON_VID 0x1A86
 #define COOLMOON_PID 0xFE05
 
@@ -169,13 +143,27 @@ struct RGBColorData {
     uint8_t b;
 };
 
+struct CoolmoonPort {
+    uint8_t     channel;      // Port index (0..9)
+    std::string name;         // Zone name
+    unsigned    leds_max;     // Max LEDs for Edit Zone
+    unsigned    leds_default; // Active LED count
+};
+
 class CoolmoonUSBDriver {
 public:
     CoolmoonUSBDriver(hid_device* handle, std::string path);
     ~CoolmoonUSBDriver();
 
     std::string GetLocation() const { return device_path; }
+
+    // Auto-read active ports and LED count from MCU
+    std::vector<CoolmoonPort> ReadFanConfig();
+
+    // Per-port, max 16 LED: protocol 0x52 0x42
     void SendChannelLEDs(uint8_t channel, const std::vector<RGBColorData>& leds);
+    // Broadcast all ports, unlimited LED: protocol 0x88 (mubu_chai)
+    void SendBroadcastLEDs(const std::vector<RGBColorData>& all_leds);
     void CommitFrame();
 
 private:
@@ -204,20 +192,54 @@ CoolmoonUSBDriver::~CoolmoonUSBDriver() {
 void CoolmoonUSBDriver::WritePacket64(const uint8_t payload[64]) {
     if (!dev) return;
 
-    // Windows HID membutuhkan 1 byte Report ID (0x00) di depan paket 64 byte
     uint8_t report[65];
     report[0] = 0x00;
     std::memcpy(&report[1], payload, 64);
     hid_write(dev, report, sizeof(report));
 }
 
+std::vector<CoolmoonPort> CoolmoonUSBDriver::ReadFanConfig() {
+    std::vector<CoolmoonPort> detected_ports;
+    if (!dev) return detected_ports;
+
+    uint8_t req[64] = {0};
+    req[0] = 0x52; // 'R'
+    req[1] = 0x42; // 'B'
+    req[2] = 0x07;
+    req[3] = 0x00;
+    req[4] = 0x01;
+    req[5] = 0xFF;
+    uint32_t sum = 0;
+    for (int i = 0; i < 6; ++i) {
+        sum += req[i];
+    }
+    req[6] = static_cast<uint8_t>(sum & 0xFF);
+
+    WritePacket64(req);
+
+    uint8_t resp[64] = {0};
+    int res = hid_read_timeout(dev, resp, sizeof(resp), 1500);
+    if (res >= 56 && resp[0] == 0x52 && resp[1] == 0x42 && resp[4] == 0x01) {
+        for (uint8_t p = 0; p < 10; ++p) {
+            size_t offset = 6 + p * 5;
+            uint16_t count = resp[offset] | (resp[offset + 1] << 8);
+            uint8_t port_id = resp[offset + 3];
+
+            if (count > 0) {
+                CoolmoonPort port;
+                port.channel = port_id;
+                port.name = "Port " + std::to_string(port_id + 1) + " (" + std::to_string(count) + " LED)";
+                port.leds_max = 200;
+                port.leds_default = count;
+                detected_ports.push_back(port);
+            }
+        }
+    }
+
+    return detected_ports;
+}
+
 void CoolmoonUSBDriver::SendChannelLEDs(uint8_t channel, const std::vector<RGBColorData>& leds) {
-    // Protokol USBFAN (1A86:FE05):
-    // Byte 0..2   : 52 42 3C ("RB" + 60 byte panjang frame aktif)
-    // Byte 3..10  : Header kontrol Direct Mode (8 byte)
-    // Byte 11..58 : Payload warna RGB untuk maksimal 16 LED (48 byte)
-    // Byte 59     : Checksum SUM(Byte 0..58) & 0xFF
-    // Byte 60..63 : Padding 0x00 (4 byte)
     const size_t max_leds_per_pkt = 16;
     const size_t total_leds = leds.size();
     uint8_t packet_idx = 0;
@@ -226,19 +248,18 @@ void CoolmoonUSBDriver::SendChannelLEDs(uint8_t channel, const std::vector<RGBCo
         uint8_t pkt[64] = {0};
         size_t chunk = std::min(max_leds_per_pkt, total_leds - offset);
 
-        pkt[0]  = 0x52; // 'R'
-        pkt[1]  = 0x42; // 'B'
-        pkt[2]  = 0x3C; // Panjang frame aktif = 60 byte (indeks 0..59)
-        pkt[3]  = static_cast<uint8_t>(channel + packet_idx);
-        pkt[4]  = 0x03; // Mode Direct Per-LED
-        pkt[5]  = 0xFF; // Port bitmask high
-        pkt[6]  = 0xFF; // Port bitmask low
+        pkt[0]  = 0x52;
+        pkt[1]  = 0x42;
+        pkt[2]  = 0x3C;
+        pkt[3]  = packet_idx;
+        pkt[4]  = 0x03;
+        pkt[5]  = (channel == 0xFF) ? 0xFF : 0xFD;
+        pkt[6]  = channel;
         pkt[7]  = 0x00;
         pkt[8]  = 0x03;
         pkt[9]  = 0x01;
         pkt[10] = 0x99;
 
-        // Payload warna urutan R-G-B (indeks 11..58)
         for (size_t i = 0; i < chunk; ++i) {
             const auto& c = leds[offset + i];
             pkt[11 + (i * 3) + 0] = c.r;
@@ -246,7 +267,6 @@ void CoolmoonUSBDriver::SendChannelLEDs(uint8_t channel, const std::vector<RGBCo
             pkt[11 + (i * 3) + 2] = c.b;
         }
 
-        // Checksum terverifikasi di Byte 59: SUM(pkt[0..58]) & 0xFF
         uint8_t checksum = 0;
         for (int b = 0; b < 59; ++b) {
             checksum = static_cast<uint8_t>(checksum + pkt[b]);
@@ -258,8 +278,43 @@ void CoolmoonUSBDriver::SendChannelLEDs(uint8_t channel, const std::vector<RGBCo
     }
 }
 
+void CoolmoonUSBDriver::SendBroadcastLEDs(const std::vector<RGBColorData>& all_leds) {
+    if (!dev || all_leds.empty()) return;
+
+    std::vector<uint8_t> flat;
+    flat.reserve(all_leds.size() * 3);
+    for (const auto& c : all_leds) {
+        flat.push_back(c.r);
+        flat.push_back(c.g);
+        flat.push_back(c.b);
+    }
+
+    const size_t total_bytes = flat.size();
+    const uint8_t z = static_cast<uint8_t>((total_bytes + 59) / 60);
+
+    for (uint8_t i = 0; i < z; ++i) {
+        uint8_t pkt[64] = {0};
+        pkt[0] = 0x88;
+        pkt[1] = z;
+        pkt[2] = i + 1;
+
+        size_t start_idx = i * 60;
+        size_t chunk_len = std::min(static_cast<size_t>(60), total_bytes - start_idx);
+        for (size_t j = 0; j < chunk_len; ++j) {
+            pkt[3 + j] = flat[start_idx + j];
+        }
+
+        uint32_t sum = 0;
+        for (int b = 0; b < 63; ++b) {
+            sum += pkt[b];
+        }
+        pkt[63] = static_cast<uint8_t>(sum & 0xFF);
+
+        WritePacket64(pkt);
+    }
+}
+
 void CoolmoonUSBDriver::CommitFrame() {
-    // USBFAN menerapkan perubahan warna langsung saat paket 52 42 3C diterima
 }
 ```
 
@@ -268,149 +323,136 @@ void CoolmoonUSBDriver::CommitFrame() {
 #pragma once
 
 #include <memory>
-#include "RGBController.h"
+#include <vector>
+#include <string>
+#include "RGBControllerInterface.h"
 #include "CoolmoonUSBDriver.h"
 
-class RGBController_CoolmoonUSB : public RGBController {
+class RGBController_CoolmoonUSB {
 public:
-    RGBController_CoolmoonUSB(std::shared_ptr<CoolmoonUSBDriver> drv, uint8_t fan_ports = 4);
-    ~RGBController_CoolmoonUSB() override = default;
+    RGBController_CoolmoonUSB(std::shared_ptr<CoolmoonUSBDriver> drv,
+                               std::vector<CoolmoonPort> ports);
+    ~RGBController_CoolmoonUSB() = default;
 
-    void SetupZones() override;
-    void ResizeZone(int zone, int new_size) override;
-    void DeviceUpdateLEDs() override;
-    void UpdateZoneLEDs(int zone) override;
-    void UpdateSingleLED(int led) override;
-    void DeviceUpdateMode() override;
+    RGBController_Setup CreateSetup();
+    void SetControllerInterface(RGBControllerInterface* iface) { controller = iface; }
+    RGBControllerInterface* GetControllerInterface() const { return controller; }
+
+    void DeviceUpdateLEDs();
+    void DeviceUpdateZoneLEDs(int zone);
+    void DeviceUpdateSingleLED(int led);
+    void DeviceUpdateMode();
+    void DeviceConfigureZone(int zone);
 
 private:
     std::shared_ptr<CoolmoonUSBDriver> driver;
-    uint8_t active_ports;
+    std::vector<CoolmoonPort> ports;
+    RGBControllerInterface* controller = nullptr;
 };
 ```
 
 ### 5.5. `RGBController_CoolmoonUSB.cpp`
 ```cpp
 #include "RGBController_CoolmoonUSB.h"
+#include <algorithm>
 
-RGBController_CoolmoonUSB::RGBController_CoolmoonUSB(std::shared_ptr<CoolmoonUSBDriver> drv, uint8_t fan_ports)
-    : driver(std::move(drv)), active_ports(fan_ports) {
-    name        = "Coolmoon USB ARGB Controller (Custom Bezel + Hub)";
-    vendor      = "Coolmoon / USBFAN";
-    type        = DEVICE_TYPE_LEDSTRIP;
-    description = "Native HID Plugin untuk Kipas Custom 16-LED Bezel Alis + 8-LED Center Ring";
-    location    = driver->GetLocation();
+static void StaticUpdateLEDs(void* obj)              { if (obj) static_cast<RGBController_CoolmoonUSB*>(obj)->DeviceUpdateLEDs(); }
+static void StaticUpdateZoneLEDs(void* obj, int z)   { if (obj) static_cast<RGBController_CoolmoonUSB*>(obj)->DeviceUpdateZoneLEDs(z); }
+static void StaticUpdateSingleLED(void* obj, int l)  { if (obj) static_cast<RGBController_CoolmoonUSB*>(obj)->DeviceUpdateSingleLED(l); }
+static void StaticUpdateMode(void* obj)              { if (obj) static_cast<RGBController_CoolmoonUSB*>(obj)->DeviceUpdateMode(); }
+static void StaticConfigureZone(void* obj, int z)    { if (obj) static_cast<RGBController_CoolmoonUSB*>(obj)->DeviceConfigureZone(z); }
+
+RGBController_CoolmoonUSB::RGBController_CoolmoonUSB(
+    std::shared_ptr<CoolmoonUSBDriver> drv,
+    std::vector<CoolmoonPort> p)
+    : driver(std::move(drv)), ports(std::move(p)) {}
+
+RGBController_Setup RGBController_CoolmoonUSB::CreateSetup() {
+    RGBController_Setup setup;
+    setup.name        = "Coolmoon USB ARGB Hub";
+    setup.vendor      = "Coolmoon / USBFAN";
+    setup.type        = DEVICE_TYPE_LEDSTRIP;
+    setup.description = "Coolmoon USB ARGB Hub - per-port independent control";
+    setup.location    = driver->GetLocation();
+    setup.serial      = "";
+    setup.version     = "1.2.0";
+    setup.flags       = 0;
+    setup.active_mode = 0;
 
     mode Direct;
     Direct.name       = "Direct";
     Direct.value      = 0x03;
     Direct.flags      = MODE_FLAG_HAS_PER_LED_COLOR;
     Direct.color_mode = MODE_COLORS_PER_LED;
-    modes.push_back(Direct);
+    setup.modes.push_back(Direct);
 
-    mode Static;
-    Static.name       = "Static";
-    Static.value      = 0x01;
-    Static.flags      = MODE_FLAG_HAS_MODE_SPECIFIC_COLOR;
-    Static.color_mode = MODE_COLORS_MODE_SPECIFIC;
-    Static.colors_min = 1;
-    Static.colors_max = 1;
-    Static.colors.resize(1);
-    modes.push_back(Static);
+    for (size_t i = 0; i < ports.size(); ++i) {
+        const auto& p = ports[i];
 
-    SetupZones();
-}
+        zone z;
+        z.name       = p.name;
+        z.type       = ZONE_TYPE_LINEAR;
+        z.flags      = ZONE_FLAG_MANUALLY_CONFIGURABLE_SIZE;
+        z.leds_min   = 1;
+        z.leds_max   = p.leds_max;
+        z.leds_count = p.leds_default;
+        setup.zones.push_back(z);
 
-void RGBController_CoolmoonUSB::SetupZones() {
-    zones.clear();
-    leds.clear();
-
-    // Setiap port kipas (24 LED) dipecah menjadi 2 Zone independen:
-    // Zone (2*p)     -> Bezel Alis (16 LED: 8 kiri + 8 kanan)
-    // Zone (2*p + 1) -> Center Hub Ring (8 LED)
-    for (uint8_t p = 0; p < active_ports; ++p) {
-        zone bezel_zone;
-        bezel_zone.name       = "Fan " + std::to_string(p + 1) + " - Bezel Alis";
-        bezel_zone.type       = ZONE_TYPE_LINEAR;
-        bezel_zone.leds_min   = 16;
-        bezel_zone.leds_max   = 16;
-        bezel_zone.leds_count = 16;
-        bezel_zone.matrix_map = nullptr;
-        zones.push_back(bezel_zone);
-
-        for (int i = 0; i < 16; ++i) {
+        for (unsigned j = 0; j < p.leds_default; ++j) {
             led l;
-            l.name  = "Fan " + std::to_string(p + 1) + " Alis LED " + std::to_string(i + 1);
-            l.value = (p << 8) | i;
-            leds.push_back(l);
-        }
-
-        zone hub_zone;
-        hub_zone.name       = "Fan " + std::to_string(p + 1) + " - Center Hub";
-        hub_zone.type       = ZONE_TYPE_LINEAR;
-        hub_zone.leds_min   = 8;
-        hub_zone.leds_max   = 8;
-        hub_zone.leds_count = 8;
-        hub_zone.matrix_map = nullptr;
-        zones.push_back(hub_zone);
-
-        for (int i = 0; i < 8; ++i) {
-            led l;
-            l.name  = "Fan " + std::to_string(p + 1) + " Hub LED " + std::to_string(i + 1);
-            l.value = (p << 8) | (16 + i);
-            leds.push_back(l);
+            l.name  = p.name + " LED " + std::to_string(j + 1);
+            l.value = static_cast<unsigned>((i << 8) | j);
+            setup.leds.push_back(l);
         }
     }
 
-    SetupColors();
-}
+    setup.object_ptr            = this;
+    setup.DeviceUpdateLEDs      = &StaticUpdateLEDs;
+    setup.DeviceUpdateZoneLEDs  = &StaticUpdateZoneLEDs;
+    setup.DeviceUpdateSingleLED = &StaticUpdateSingleLED;
+    setup.DeviceUpdateMode      = &StaticUpdateMode;
+    setup.DeviceConfigureZone   = &StaticConfigureZone;
+    setup.DeviceSaveMode        = nullptr;
+    setup.DeviceUpdateZoneMode                        = nullptr;
+    setup.DeviceUpdateDeviceSpecificConfiguration     = nullptr;
+    setup.DeviceUpdateDeviceSpecificZoneConfiguration = nullptr;
 
-void RGBController_CoolmoonUSB::ResizeZone(int /*zone*/, int /*new_size*/) {
-    // Dikunci pada topologi fisik 16 LED Bezel + 8 LED Center Hub per kipas
+    return setup;
 }
 
 void RGBController_CoolmoonUSB::DeviceUpdateLEDs() {
-    for (uint8_t p = 0; p < active_ports; ++p) {
-        std::vector<RGBColorData> port_buffer(24);
-        const size_t base_idx = p * 24;
+    if (!controller) return;
 
-        for (size_t i = 0; i < 24; ++i) {
-            RGBColor c = (modes[active_mode].color_mode == MODE_COLORS_MODE_SPECIFIC)
-                             ? modes[active_mode].colors[0]
-                             : colors[base_idx + i];
-            port_buffer[i] = {
-                static_cast<uint8_t>(RGBGetRValue(c)),
-                static_cast<uint8_t>(RGBGetGValue(c)),
-                static_cast<uint8_t>(RGBGetBValue(c))
-            };
-        }
-        driver->SendChannelLEDs(p, port_buffer);
+    unsigned int total_leds = 0;
+    for (size_t i = 0; i < ports.size(); ++i) {
+        total_leds += controller->GetZoneLEDsCount(static_cast<unsigned int>(i));
     }
-    driver->CommitFrame();
-}
 
-void RGBController_CoolmoonUSB::UpdateZoneLEDs(int zone) {
-    const uint8_t port = static_cast<uint8_t>(zone / 2);
-    std::vector<RGBColorData> port_buffer(24);
-    const size_t base_idx = port * 24;
-
-    for (size_t i = 0; i < 24; ++i) {
-        RGBColor c = colors[base_idx + i];
-        port_buffer[i] = {
+    std::vector<RGBColorData> buf(total_leds);
+    for (unsigned int i = 0; i < total_leds; ++i) {
+        RGBColor c = controller->GetColor(i);
+        buf[i] = {
             static_cast<uint8_t>(RGBGetRValue(c)),
             static_cast<uint8_t>(RGBGetGValue(c)),
             static_cast<uint8_t>(RGBGetBValue(c))
         };
     }
-    driver->SendChannelLEDs(port, port_buffer);
-    driver->CommitFrame();
+    driver->SendBroadcastLEDs(buf);
 }
 
-void RGBController_CoolmoonUSB::UpdateSingleLED(int led) {
-    UpdateZoneLEDs((led / 24) * 2);
+void RGBController_CoolmoonUSB::DeviceUpdateZoneLEDs(int /*zone*/) {
+    DeviceUpdateLEDs();
+}
+
+void RGBController_CoolmoonUSB::DeviceUpdateSingleLED(int /*led*/) {
+    DeviceUpdateLEDs();
 }
 
 void RGBController_CoolmoonUSB::DeviceUpdateMode() {
+    DeviceUpdateLEDs();
+}
+
+void RGBController_CoolmoonUSB::DeviceConfigureZone(int /*zone*/) {
     DeviceUpdateLEDs();
 }
 ```
@@ -419,52 +461,50 @@ void RGBController_CoolmoonUSB::DeviceUpdateMode() {
 ```cpp
 #pragma once
 
-#include <QObject>
-#include <QtPlugin>
-#include <vector>
 #include "OpenRGBPluginInterface.h"
 #include "RGBController_CoolmoonUSB.h"
+#include <vector>
 
 class OpenRGBCoolmoonPlugin : public QObject, public OpenRGBPluginInterface {
     Q_OBJECT
-    Q_PLUGIN_METADATA(IID OpenRGBPluginInterface_IID)
+    Q_PLUGIN_METADATA(IID OpenRGBPluginInterface_IID FILE "OpenRGBCoolmoonPlugin.json")
     Q_INTERFACES(OpenRGBPluginInterface)
 
 public:
     OpenRGBPluginInfo GetPluginInfo() override;
     unsigned int GetPluginAPIVersion() override;
     void Load(OpenRGBPluginAPIInterface* plugin_api_ptr) override;
-    QWidget* GetWidget() override { return nullptr; }
-    QMenu* GetTrayMenu() override { return nullptr; }
+    QWidget* GetWidget() override;
     void Unload() override;
-
-    void OnProfileLoad(nlohmann::json /*profile_data*/) override {}
-    nlohmann::json OnProfileSave() override { return nlohmann::json(); }
-    unsigned char* OnSDKCommand(unsigned int, unsigned char*, unsigned int*) override { return nullptr; }
 
 private:
     OpenRGBPluginAPIInterface* api = nullptr;
     std::vector<RGBController_CoolmoonUSB*> controllers;
+    QWidget* dummy_widget = nullptr;
 };
 ```
 
 ### 5.7. `OpenRGBCoolmoonPlugin.cpp`
 ```cpp
 #include "OpenRGBCoolmoonPlugin.h"
+#include <QLabel>
+#include <QVBoxLayout>
 
 OpenRGBPluginInfo OpenRGBCoolmoonPlugin::GetPluginInfo() {
     OpenRGBPluginInfo info;
-    info.Name        = "Coolmoon Custom Fan ARGB Plugin";
-    info.Description = "Native USB HID driver untuk kipas custom 16-LED Bezel + 8-LED Hub Ring";
-    info.Version     = "1.0.0";
-    info.Author      = "Custom Build";
-    info.Location    = OPENRGB_PLUGIN_LOCATION_NONE;
-    info.Label       = "Coolmoon USB";
+    info.Name            = "Coolmoon Custom Fan ARGB Plugin";
+    info.Description     = "Native USB HID driver untuk kipas Coolmoon USB (Auto-Detect MCU & Per-LED)";
+    info.Version         = "1.2.0";
+    info.Commit          = "1.2.0";
+    info.URL             = "https://openrgb.org";
+    info.Location        = OPENRGB_PLUGIN_LOCATION_SETTINGS;
+    info.Label           = "Coolmoon USB";
+    info.ProtocolVersion = 0;
     return info;
 }
 
 unsigned int OpenRGBCoolmoonPlugin::GetPluginAPIVersion() {
-    return OPENRGB_PLUGIN_API_VERSION; // API v5 (OpenRGB 1.0+)
+    return OPENRGB_PLUGIN_API_VERSION;
 }
 
 void OpenRGBCoolmoonPlugin::Load(OpenRGBPluginAPIInterface* plugin_api_ptr) {
@@ -478,10 +518,29 @@ void OpenRGBCoolmoonPlugin::Load(OpenRGBPluginAPIInterface* plugin_api_ptr) {
         if (cur->usage_page >= 0xFF00 || cur->interface_number == 0) {
             hid_device* handle = hid_open_path(cur->path);
             if (handle) {
-                auto drv   = std::make_shared<CoolmoonUSBDriver>(handle, cur->path);
-                auto* ctrl = new RGBController_CoolmoonUSB(drv, 4); // Ubah angka 4 sesuai jumlah kipas terpasang
+                auto drv = std::make_shared<CoolmoonUSBDriver>(handle, cur->path);
+
+                // Auto-read port config dari hardware MCU
+                std::vector<CoolmoonPort> port_map = drv->ReadFanConfig();
+                if (port_map.empty()) {
+                    // Fallback jika MCU belum/tidak merespon
+                    port_map = {
+                        {0, "Port 1 (Fan)",       200,  8},
+                        {1, "Port 2 (Fan)",       200,  8},
+                        {2, "Port 3 (Fan)",       200, 10},
+                        {3, "Port 4 (Fan)",       200,  8},
+                        {4, "Port 5 (Fan)",       200, 10},
+                        {8, "Port 9 (Strip 72)",  200, 72},
+                        {9, "Port 10 (Strip 18)", 200, 18},
+                    };
+                }
+                auto* ctrl = new RGBController_CoolmoonUSB(drv, std::move(port_map));
                 controllers.push_back(ctrl);
-                api->RegisterVirtualRGBController(ctrl);
+
+                RGBController_Setup setup = ctrl->CreateSetup();
+                RGBControllerInterface* iface = api->CreateVirtualRGBController(&setup);
+                ctrl->SetControllerInterface(iface);
+                api->RegisterVirtualRGBController(iface);
                 break;
             }
         }
@@ -490,38 +549,30 @@ void OpenRGBCoolmoonPlugin::Load(OpenRGBPluginAPIInterface* plugin_api_ptr) {
     hid_free_enumeration(devs);
 }
 
+QWidget* OpenRGBCoolmoonPlugin::GetWidget() {
+    if (!dummy_widget) {
+        dummy_widget = new QWidget();
+        auto* layout = new QVBoxLayout(dummy_widget);
+        auto* label  = new QLabel("Coolmoon Custom Fan ARGB Plugin is active.", dummy_widget);
+        layout->addWidget(label);
+    }
+    return dummy_widget;
+}
+
 void OpenRGBCoolmoonPlugin::Unload() {
     for (auto* ctrl : controllers) {
-        if (api) {
-            api->UnregisterVirtualRGBControllerInThread(ctrl);
+        if (api && ctrl->GetControllerInterface()) {
+            api->UnregisterVirtualRGBControllerInThread(ctrl->GetControllerInterface());
+            api->DeleteVirtualRGBController(ctrl->GetControllerInterface());
         }
         delete ctrl;
     }
     controllers.clear();
     hid_exit();
+
+    if (dummy_widget) {
+        delete dummy_widget;
+        dummy_widget = nullptr;
+    }
 }
 ```
-
----
-
-## 6. Instalasi, Pengujian & Kalibrasi Lanjutan
-
-1. **Tutup Aplikasi Bawaan:** Pastikan *MoonCenter* tertutup penuh (termasuk ikon *system tray*) sebelum membuka OpenRGB agar tidak terjadi konflik eksklusif pada endpoint USB HID.
-2. **Pasang Plugin ke OpenRGB:**
-   * Buka **OpenRGB $\rightarrow$ Settings $\rightarrow$ Plugins $\rightarrow$ Install Plugin**.
-   * Pilih file `OpenRGBCoolmoonPlugin.dll` dari folder `build/Release/` (atau salin langsung ke `%APPDATA%\OpenRGB\plugins\`).
-   * Centang **Enabled** pada *Coolmoon Custom Fan ARGB Plugin*, lalu restart OpenRGB.
-3. **Verifikasi Zona:**
-   * Pada tab **Devices**, pastikan muncul perangkat **Coolmoon USB ARGB Controller (Custom Bezel + Hub)**.
-   * Uji nyala warna terpisah pada **`Fan 1 - Bezel Alis`** (`16 LED`) dan **`Fan 1 - Center Hub`** (`8 LED`).
-4. **Catatan Kalibrasi Hardware (Jika Diperlukan Nanti):**
-   * **Jumlah Kipas (`active_ports`):** Saat ini diset default `4` kipas (`new RGBController_CoolmoonUSB(drv, 4)` di `OpenRGBCoolmoonPlugin.cpp`). Ubah angka `4` jika jumlah kipas di casing berbeda.
-   * **Per-Port Addressing vs Broadcast:** Pada tangkapan awal, `pkt[5..6]` bernilai `0xFF 0xFF` (*port bitmask*). Jika saat diuji semua port menyala seragam secara bersamaan, lakukan 1 kali perekaman Wireshark saat mengubah warna **Port 2** secara terpisah di MoonCenter untuk memperbarui logika *bitmask* `pkt[5..6]` pada `CoolmoonUSBDriver.cpp`.
-
----
-
-## 7. Prompt Siap Pakai untuk Antigravity
-
-Salin dan kirimkan instruksi berikut ke chat Agent Antigravity setelah menyimpan dokumen ini di folder kerja proyekmu:
-
-> *"Baca file `OPENRGB_COOLMOON_PLUGIN_DOCS.md` di workspace ini. Buat seluruh file sumber proyek C++ sesuai struktur pada Bagian 3 dan Bagian 5, lalu jalankan langkah pada Bagian 4: cek versi Qt dari instalasi OpenRGB yang terpasang di PC ini, clone repository `CalcProgrammer1/OpenRGB` ke `third_party/OpenRGB`, sesuaikan API registrasi controller jika diperlukan, dan compile proyek ini hingga menghasilkan file `OpenRGBCoolmoonPlugin.dll` versi Release x64."*
