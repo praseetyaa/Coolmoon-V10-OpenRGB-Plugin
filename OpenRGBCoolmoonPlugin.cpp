@@ -5,6 +5,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPushButton>
+#include <QSettings>
 #include <QSlider>
 #include <QVBoxLayout>
 
@@ -60,6 +61,18 @@ void OpenRGBCoolmoonPlugin::Load(OpenRGBPluginAPIInterface* plugin_api_ptr) {
                 auto* ctrl = new RGBController_CoolmoonUSB(drv, std::move(port_map));
                 controllers.push_back(ctrl);
 
+                // Auto-restore pengaturan fan speed & sync saat OpenRGB startup
+                QSettings settings("OpenRGB", "CoolmoonPlugin");
+                int saved_speed = settings.value("fan_speed", 50).toInt();
+                bool saved_sync = settings.value("mobo_sync", false).toBool();
+
+                if (saved_sync) {
+                    drv->SetFanControlMode(1);
+                } else {
+                    drv->SetFanControlMode(0);
+                    drv->SetFanSpeed(static_cast<uint8_t>(saved_speed));
+                }
+
                 RGBController_Setup setup = ctrl->CreateSetup();
                 RGBControllerInterface* iface = api->CreateVirtualRGBController(&setup);
                 ctrl->SetControllerInterface(iface);
@@ -90,15 +103,20 @@ QWidget* OpenRGBCoolmoonPlugin::GetWidget() {
         auto* fan_group = new QGroupBox("Fan Speed Control (PWM)", dummy_widget);
         auto* fan_layout = new QVBoxLayout(fan_group);
 
+        // Load persistent settings
+        QSettings settings("OpenRGB", "CoolmoonPlugin");
+        int saved_speed = settings.value("fan_speed", 50).toInt();
+        bool saved_sync = settings.value("mobo_sync", false).toBool();
+
         // Slider Row
         auto* slider_row = new QHBoxLayout();
         auto* slider_label = new QLabel("Kecepatan Kipas:", fan_group);
-        auto* speed_val_lbl = new QLabel("50%", fan_group);
+        auto* speed_val_lbl = new QLabel(QString::number(saved_speed) + "%", fan_group);
         speed_val_lbl->setStyleSheet("font-weight: bold; min-width: 45px;");
 
         auto* slider = new QSlider(Qt::Horizontal, fan_group);
         slider->setRange(0, 100);
-        slider->setValue(50);
+        slider->setValue(saved_speed);
         slider->setTickInterval(10);
         slider->setTickPosition(QSlider::TicksBelow);
 
@@ -123,13 +141,24 @@ QWidget* OpenRGBCoolmoonPlugin::GetWidget() {
         // Motherboard PWM Sync Checkbox
         auto* chk_sync = new QCheckBox("Motherboard PWM Sync (Gunakan sinyal PWM kabel header Motherboard)", fan_group);
         chk_sync->setStyleSheet("margin-top: 10px;");
+        chk_sync->setChecked(saved_sync);
         fan_layout->addWidget(chk_sync);
 
         main_layout->addWidget(fan_group);
 
-        // Wire Slider & Buttons to Hardware Driver
+        // Set initial enabled state based on saved_sync
+        slider->setEnabled(!saved_sync);
+        btn_silent->setEnabled(!saved_sync);
+        btn_normal->setEnabled(!saved_sync);
+        btn_turbo->setEnabled(!saved_sync);
+        btn_max->setEnabled(!saved_sync);
+
+        // Wire Slider & Buttons to Hardware Driver + Autosave
         QObject::connect(slider, &QSlider::valueChanged, [this, speed_val_lbl](int val) {
             speed_val_lbl->setText(QString::number(val) + "%");
+            QSettings settings("OpenRGB", "CoolmoonPlugin");
+            settings.setValue("fan_speed", val);
+
             for (auto* ctrl : controllers) {
                 if (ctrl && ctrl->GetDriver()) {
                     ctrl->GetDriver()->SetFanSpeed(static_cast<uint8_t>(val));
@@ -147,6 +176,9 @@ QWidget* OpenRGBCoolmoonPlugin::GetWidget() {
 
         QObject::connect(chk_sync, &QCheckBox::toggled, [this, slider, btn_silent, btn_normal, btn_turbo, btn_max](bool checked) {
             uint8_t mode = checked ? 1 : 0;
+            QSettings settings("OpenRGB", "CoolmoonPlugin");
+            settings.setValue("mobo_sync", checked);
+
             slider->setEnabled(!checked);
             btn_silent->setEnabled(!checked);
             btn_normal->setEnabled(!checked);
@@ -156,6 +188,9 @@ QWidget* OpenRGBCoolmoonPlugin::GetWidget() {
             for (auto* ctrl : controllers) {
                 if (ctrl && ctrl->GetDriver()) {
                     ctrl->GetDriver()->SetFanControlMode(mode);
+                    if (!checked) {
+                        ctrl->GetDriver()->SetFanSpeed(static_cast<uint8_t>(slider->value()));
+                    }
                 }
             }
         });
