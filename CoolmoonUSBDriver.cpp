@@ -181,7 +181,7 @@ void CoolmoonUSBDriver::SetFanControlMode(uint8_t mode) {
     pkt[2] = 0x07; // Frame length
     pkt[3] = 0x00;
     pkt[4] = 0x08; // Opcode Fan Speed Control Authority
-    pkt[5] = mode; // 0 = Manual/Software, 1 = Motherboard PWM Sync
+    pkt[5] = mode; // 0 = Motherboard PWM Sync, 1 = Manual/Software
 
     uint32_t sum = 0;
     for (int i = 0; i < 6; ++i) {

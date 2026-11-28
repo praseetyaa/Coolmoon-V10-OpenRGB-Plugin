@@ -82,7 +82,7 @@ Digunakan untuk mengalihkan kendali kipas antara kontrol manual software dan sin
   * `Byte 2`: `0x07` (Panjang paket aktif)
   * `Byte 3`: `0x00`
   * `Byte 4`: `0x08` (Opcode Fan Control Authority)
-  * `Byte 5`: `mode` (`0` = Manual/Software, `1` = Motherboard PWM Sync)
+  * `Byte 5`: `mode` (`0` = Motherboard PWM Sync, `1` = Manual/Software)
   * `Byte 6`: `SUM(Byte 0..5) & 0xFF` (Checksum)
   * `Byte 7..63`: Padding `0x00`
 

@@ -67,9 +67,10 @@ void OpenRGBCoolmoonPlugin::Load(OpenRGBPluginAPIInterface* plugin_api_ptr) {
                 bool saved_sync = settings.value("mobo_sync", false).toBool();
 
                 if (saved_sync) {
-                    drv->SetFanControlMode(1);
+                    drv->SetFanControlMode(0); // 0 = Motherboard PWM Sync
+                    drv->SetFanSpeed(0);
                 } else {
-                    drv->SetFanControlMode(0);
+                    drv->SetFanControlMode(1); // 1 = Manual/Software
                     drv->SetFanSpeed(static_cast<uint8_t>(saved_speed));
                 }
 
@@ -175,7 +176,6 @@ QWidget* OpenRGBCoolmoonPlugin::GetWidget() {
         QObject::connect(btn_max,    &QPushButton::clicked, [set_preset]() { set_preset(100); });
 
         QObject::connect(chk_sync, &QCheckBox::toggled, [this, slider, btn_silent, btn_normal, btn_turbo, btn_max](bool checked) {
-            uint8_t mode = checked ? 1 : 0;
             QSettings settings("OpenRGB", "CoolmoonPlugin");
             settings.setValue("mobo_sync", checked);
 
@@ -187,8 +187,11 @@ QWidget* OpenRGBCoolmoonPlugin::GetWidget() {
 
             for (auto* ctrl : controllers) {
                 if (ctrl && ctrl->GetDriver()) {
-                    ctrl->GetDriver()->SetFanControlMode(mode);
-                    if (!checked) {
+                    if (checked) {
+                        ctrl->GetDriver()->SetFanControlMode(0); // 0 = Motherboard PWM Sync
+                        ctrl->GetDriver()->SetFanSpeed(0);       // Lepas override timer PWM software
+                    } else {
+                        ctrl->GetDriver()->SetFanControlMode(1); // 1 = Manual/Software
                         ctrl->GetDriver()->SetFanSpeed(static_cast<uint8_t>(slider->value()));
                     }
                 }
